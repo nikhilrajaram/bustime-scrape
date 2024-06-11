@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"path/filepath"
@@ -36,10 +37,17 @@ func (rwm *RWMap[K, V]) add(key K, val V) {
 	rwm.m[key] = val
 }
 
-func (vs *RWMap[K, V]) has(key K) bool {
-	vs.mu.RLock()
-	defer vs.mu.RUnlock()
-	_, ok := vs.m[key]
+func (rwm *RWMap[K, V]) get(key K) (V, bool) {
+	rwm.mu.RLock()
+	defer rwm.mu.RUnlock()
+	val, ok := rwm.m[key]
+	return val, ok
+}
+
+func (rwm *RWMap[K, V]) has(key K) bool {
+	rwm.mu.RLock()
+	defer rwm.mu.RUnlock()
+	_, ok := rwm.m[key]
 	return ok
 }
 
@@ -97,6 +105,8 @@ func main() {
 
 	// route ID set
 	routeMap := RWMap[string, bool]{m: make(map[string]bool)}
+	// stop ID => routes map
+	routesForStopMap := RWMap[string, []string]{m: make(map[string][]string)}
 	// stop ID => stop name map
 	stopMap := RWMap[string, string]{m: make(map[string]string)}
 	// for any unsuccessful requests
@@ -151,6 +161,13 @@ func main() {
 		stopName := e.Text
 
 		stopMap.add(stopId, stopName)
+
+		stopsForRoutes, ok := routesForStopMap.get(stopId)
+		if ok {
+			routesForStopMap.add(stopId, append(stopsForRoutes, stopId))
+		} else {
+			routesForStopMap.add(stopId, []string{stopId})
+		}
 	})
 
 	c.OnError(func(r *colly.Response, err error) {
@@ -167,9 +184,10 @@ func main() {
 	toCSV("out/routes.csv", []string{"routeId"}, routeData)
 	var stopData [][]string
 	for stopId, stopName := range stopMap.m {
-		stopData = append(stopData, []string{stopId, stopName})
+		routes, _ := routesForStopMap.get(stopId)
+		stopData = append(stopData, []string{stopId, stopName, strings.Join(routes, ",")})
 	}
-	toCSV("out/stops.csv", []string{"stopId", "stopName"}, stopData)
+	toCSV("out/stops.csv", []string{"stopId", "stopName", "routes"}, stopData)
 	if len(errors.s) > 1 {
 		errorFile := "out/errors.csv"
 		toCSV(errorFile, []string{"status code", "error message"}, errors.s)
